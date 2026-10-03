@@ -1,0 +1,5 @@
+Chưa có khả năng xoay khớp trục , phương án tối ưu là khóa vật thể bằng phím tắt sẽ có thể tương tác xoay qua lại 180 độ
+khi quay mặt thanh ngược xuống dưới thì tính vật lý sẽ mất và có thể bị xuyên vật thể bug
+khi cắm chốt vào một thanh sau đó lật ngang một thanh kéo gần cái chốt thanh đang được cắm thì nó sẽ bị lỗi thanh ngang nó sẽ bị ngang ra cắm vào thanh đang để lỗ ngang
+Bỏ phần cụm lắp ghép nhanh
+
