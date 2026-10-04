@@ -1,0 +1,307 @@
+<!DOCTYPE html>
+<html lang="vi">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Mô Hình 3D Lắp Ghép Thanh & Trục Cơ Khí</title>
+  <script src="https://cdn.tailwindcss.com"></script>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/three@0.128.0/examples/js/controls/OrbitControls.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/three@0.128.0/examples/js/controls/TransformControls.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/three@0.128.0/examples/js/exporters/GLTFExporter.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/three@0.128.0/examples/js/loaders/GLTFLoader.js"></script>
+  <script src="https://unpkg.com/lucide@latest"></script>
+
+  <link rel="stylesheet" href="css/style.css">
+</head>
+<body class="bg-black text-slate-100 h-screen w-screen flex flex-col md:flex-row relative select-none">
+
+  <!-- 3D Canvas Container -->
+  <div id="canvas-container" class="relative flex-1 h-full w-full bg-black overflow-hidden order-2 md:order-2">
+    <canvas id="webgl-canvas" class="w-full h-full block cursor-grab active:cursor-grabbing"></canvas>
+    
+    <!-- Drag & Drop Overlay Zone cho file GLB -->
+    <div id="glb-drop-overlay" class="hidden absolute inset-0 z-30 bg-slate-950/85 backdrop-blur-sm border-2 border-dashed border-cyan-400 flex flex-col items-center justify-center pointer-events-none transition-all">
+      <div class="w-16 h-16 rounded-2xl bg-cyan-500/20 border border-cyan-400 text-cyan-300 flex items-center justify-center mb-2 animate-bounce shadow-xl">
+        <i data-lucide="upload-cloud" class="w-8 h-8"></i>
+      </div>
+      <p class="text-sm font-bold text-white tracking-wide">Thả file .GLB / .GLTF vào Studio</p>
+      <p class="text-xs text-cyan-300 mt-1 font-medium">Tự động đọc tọa độ Sockets & Tái hiện Nhãn số 3D</p>
+    </div>
+
+    <!-- Toast Thông Báo Nổi -->
+    <div id="toast-notification" class="studio-toast hidden" role="status" aria-live="polite">
+      <i id="toast-icon" data-lucide="check-circle" class="studio-toast-icon"></i>
+      <span id="toast-message">Thông báo hệ thống</span>
+    </div>
+
+    <header id="viewport-header" class="viewport-header" aria-label="Thanh công cụ CAD">
+      <div class="header-brand-group header-history-group">
+        <button id="history-undo" onclick="undoAssembly()" class="header-icon-button" title="Undo" aria-label="Undo">
+          <i data-lucide="undo-2" class="h-4 w-4"></i>
+        </button>
+        <button id="history-redo" onclick="redoAssembly()" class="header-icon-button" title="Redo" aria-label="Redo">
+          <i data-lucide="redo-2" class="h-4 w-4"></i>
+        </button>
+      </div>
+
+      <div id="transform-toolbar" class="header-tools" aria-label="Công cụ biến đổi">
+        <button id="btn-tool-select" onclick="setToolMode('select')" class="tool-btn is-active" title="Chọn vật thể" aria-label="Chọn vật thể">
+          <i data-lucide="mouse-pointer-2" class="h-4 w-4"></i><span class="tool-label">Chọn</span>
+        </button>
+        <button id="btn-tool-translate" onclick="setToolMode('translate')" class="tool-btn" title="Di chuyển vật thể" aria-label="Di chuyển vật thể">
+          <i data-lucide="move" class="h-4 w-4"></i><span class="tool-label">Di chuyển</span>
+        </button>
+        <button id="btn-tool-rotate" onclick="setToolMode('rotate')" class="tool-btn" title="Xoay vật thể" aria-label="Xoay vật thể">
+          <i data-lucide="rotate-cw" class="h-4 w-4"></i><span class="tool-label">Xoay</span>
+        </button>
+        <button id="btn-tool-flip" onclick="flipPartSafely()" class="tool-btn" title="Lật vật thể theo khớp" aria-label="Lật vật thể theo khớp">
+          <i data-lucide="flip-horizontal-2" class="h-4 w-4"></i><span class="tool-label">Lật</span>
+        </button>
+      </div>
+
+      <div class="header-file-actions">
+        <button onclick="document.getElementById('model-file-input').click()" class="header-action-button import-action" title="Nhập mô hình GLB/GLTF" aria-label="Nhập mô hình GLB/GLTF">
+          <i data-lucide="upload" class="h-4 w-4"></i><span>Nhập GLB</span>
+        </button>
+        <button onclick="exportToGLB(false)" class="header-action-button export-action" title="Xuất toàn bộ mô hình GLB" aria-label="Xuất toàn bộ mô hình GLB">
+          <i data-lucide="download" class="h-4 w-4"></i><span>Xuất GLB</span>
+        </button>
+      </div>
+    </header>
+
+    <!-- Floating HUD cho chi tiết đang chọn -->
+    <div id="floating-part-hud" class="hidden absolute top-20 left-4 z-10 bg-slate-900/95 backdrop-blur-md border border-cyan-500/50 rounded-2xl p-3 shadow-2xl flex items-center gap-3 max-w-xs">
+      <div class="w-2.5 h-2.5 rounded-full bg-cyan-400 animate-pulse"></div>
+      <div class="flex-1 min-w-0">
+        <p class="text-[10px] text-slate-400 uppercase font-mono tracking-wider">Đang chọn</p>
+        <p id="floating-part-name" class="text-xs font-bold text-cyan-200 truncate">Dầm Kỹ Thuật</p>
+      </div>
+      <button id="btn-tool-deselect" onclick="selectPart(null)" class="hidden p-1.5 rounded-lg text-rose-300 hover:bg-rose-950/50 transition-colors" title="Bỏ chọn vật thể" aria-label="Bỏ chọn vật thể">
+        <i data-lucide="x" class="h-4 w-4"></i>
+      </button>
+    </div>
+
+    <nav id="bottom-dock" class="bottom-dock" aria-label="Điều khiển khung nhìn và trạng thái">
+      <div class="dock-group" aria-label="Góc nhìn">
+        <button onclick="setCameraView('iso')" class="dock-button" title="Góc phối cảnh" aria-label="Góc phối cảnh"><i data-lucide="box" class="h-4 w-4"></i><span class="dock-label">Iso</span></button>
+        <button onclick="setCameraView('top')" class="dock-button" title="Nhìn từ trên" aria-label="Nhìn từ trên"><i data-lucide="arrow-down" class="h-4 w-4"></i><span class="dock-label">Trên</span></button>
+        <button onclick="setCameraView('front')" class="dock-button" title="Nhìn từ cạnh" aria-label="Nhìn từ cạnh"><i data-lucide="layout-template" class="h-4 w-4"></i><span class="dock-label">Cạnh</span></button>
+        <button id="btn-tool-focus" onclick="focusCurrentSelected()" class="dock-button" title="Focus vật thể đang chọn" aria-label="Focus vật thể đang chọn"><i data-lucide="crosshair" class="h-4 w-4"></i><span class="dock-label">Focus</span></button>
+      </div>
+
+      <span class="dock-divider" aria-hidden="true"></span>
+
+      <div class="dock-group" aria-label="Trạng thái">
+        <button id="btn-explode" onclick="toggleAssemblyExplode()" class="dock-button dock-state-button" title="Tách rời hoặc lắp lại" aria-label="Tách rời hoặc lắp lại">
+          <i data-lucide="unfold-horizontal" class="h-4 w-4"></i><span id="label-explode" class="dock-label">Tách rời</span>
+        </button>
+        <details id="display-options" class="display-menu">
+          <summary class="dock-button" title="Tùy chọn nhãn số và hitbox" aria-label="Tùy chọn hiển thị"><i data-lucide="eye" class="h-4 w-4"></i><span class="dock-label">Hiển thị</span></summary>
+          <div class="display-menu-panel">
+            <p class="display-menu-heading">Nhãn số</p>
+            <div class="grid gap-1">
+              <button type="button" onclick="setBadgesMode('selected')" aria-pressed="true" data-badges-mode="selected" class="display-mode-option is-selected"><span>Khi chọn</span><i data-lucide="check" class="mode-check h-3.5 w-3.5 text-cyan-400"></i></button>
+              <button type="button" onclick="setBadgesMode('all')" aria-pressed="false" data-badges-mode="all" class="display-mode-option"><span>Hiện tất cả</span><i data-lucide="check" class="mode-check hidden h-3.5 w-3.5 text-cyan-400"></i></button>
+              <button type="button" onclick="setBadgesMode('none')" aria-pressed="false" data-badges-mode="none" class="display-mode-option"><span>Tắt số</span><i data-lucide="check" class="mode-check hidden h-3.5 w-3.5 text-cyan-400"></i></button>
+            </div>
+            <div class="display-menu-divider"></div>
+            <label class="display-hitbox-toggle"><span>Hitbox vật thể chọn</span><input id="toggle-hitbox" type="checkbox" checked onchange="setHitboxVisibility(this.checked)"></label>
+          </div>
+        </details>
+        <button id="toggle-autorotate" onclick="toggleAutoRotate()" class="dock-icon-button" title="Bật/tắt tự xoay" aria-label="Bật/tắt tự xoay"><i data-lucide="rotate-cw" class="h-4 w-4"></i></button>
+        <button onclick="fitCameraToParts()" class="dock-icon-button" title="Reset khung nhìn" aria-label="Reset khung nhìn"><i data-lucide="scan" class="h-4 w-4"></i></button>
+      </div>
+    </nav>
+
+    <!-- Mobile sidebar toggle -->
+    <button id="mobile-toggle-btn" class="md:hidden absolute top-4 right-4 z-20 bg-slate-900/90 border border-slate-700 p-2.5 rounded-xl text-cyan-400">
+      <i data-lucide="sliders" class="w-5 h-5"></i>
+    </button>
+  </div>
+
+  <!-- Sidebar Panel -->
+  <aside id="sidebar" class="sidebar-panel w-full md:w-84 lg:w-96 bg-black border-t md:border-t-0 md:border-r border-slate-800 p-4 flex flex-col justify-between overflow-y-auto custom-scrollbar transition-all duration-300 z-20 max-h-[50vh] md:max-h-full order-1 md:order-1">
+    <div class="sidebar-main-content space-y-3.5">
+      <!-- Section Header -->
+      <div class="sidebar-brand-row">
+        <div class="project-brand" aria-label="ZMROBO Assembly Studio">
+          <span class="brand-mark"><i data-lucide="box" class="h-4 w-4"></i></span>
+          <span class="brand-copy"><strong>ZMROBO</strong><small>ASSEMBLY STUDIO</small></span>
+        </div>
+        <span id="badge-parts-count" class="text-[10px] bg-cyan-500/10 text-cyan-400 border border-cyan-500/20 px-2 py-0.5 rounded-full font-mono">0 Linh kiện</span>
+      </div>
+
+      <!-- Main Navigation Tabs -->
+      <div class="grid grid-cols-3 gap-1 bg-slate-950 p-1 rounded-xl border border-slate-800 text-[11px]">
+        <button id="nav-btn-library" onclick="setSidebarTab('library')" class="py-1.5 font-semibold rounded-lg bg-cyan-500 text-slate-950 transition-all flex items-center justify-center gap-1">
+          <i data-lucide="plus-circle" class="w-3.5 h-3.5"></i> Thêm
+        </button>
+        <button id="nav-btn-inspector" onclick="setSidebarTab('inspector')" class="py-1.5 font-medium rounded-lg text-slate-400 hover:text-slate-200 transition-all flex items-center justify-center gap-1">
+          <i data-lucide="sliders" class="w-3.5 h-3.5"></i> Chỉnh
+        </button>
+        <button id="nav-btn-joints" onclick="setSidebarTab('joints')" class="py-1.5 font-medium rounded-lg text-slate-400 hover:text-slate-200 transition-all flex items-center justify-center gap-1">
+          <i data-lucide="network" class="w-3.5 h-3.5"></i> Cây Mô Hình
+        </button>
+      </div>
+
+      <div id="tab-pane-library" class="space-y-3">
+        <input id="model-file-input" type="file" accept=".glb,.gltf,model/gltf-binary,model/gltf+json" class="hidden">
+        <input id="project-file-input" type="file" accept=".craft3d.json,application/json" class="hidden">
+
+        <div class="library-actions">
+          <button onclick="document.getElementById('model-file-input').click()" class="library-import-button"><i data-lucide="upload" class="h-4 w-4"></i> Nhập mô hình</button>
+          <button onclick="document.getElementById('project-file-input').click()" class="library-secondary-button" title="Mở dự án đã lưu" aria-label="Mở dự án đã lưu"><i data-lucide="folder-open" class="h-4 w-4"></i></button>
+          <button onclick="saveProjectFile()" class="library-secondary-button" title="Lưu dự án"><i data-lucide="save" class="h-4 w-4"></i></button>
+        </div>
+
+        <label class="library-search-wrap">
+          <i data-lucide="search" class="h-4 w-4"></i>
+          <input id="library-search" type="search" placeholder="Tìm linh kiện..." autocomplete="off" aria-label="Tìm kiếm linh kiện">
+        </label>
+        <div class="library-category-tabs" role="tablist" aria-label="Danh mục linh kiện">
+          <button type="button" class="library-category-tab is-active" data-library-filter="beams" aria-pressed="true">Dầm</button>
+          <button type="button" class="library-category-tab" data-library-filter="pins" aria-pressed="false">Chốt</button>
+          <button type="button" class="library-category-tab" data-library-filter="devices" aria-pressed="false">Thiết bị</button>
+        </div>
+
+        <details class="library-accordion" data-library-folder="beams" open>
+          <summary><i data-lucide="blocks" class="h-4 w-4 text-cyan-300"></i><span>Khung & Dầm</span><small>Beams</small></summary>
+          <div class="library-accordion-content">
+            <div class="library-thumbnail-grid">
+              <button draggable="true" class="library-thumbnail-card" data-library-item data-model-id="beam-7-blue" data-spawn-kind="beam" data-holes-count="7" data-color="0x0284c7" data-library-category="beams" data-library-name="Dầm 7 lỗ · Xanh" title="Dầm 7 lỗ · Xanh" aria-label="Dầm 7 lỗ · Xanh"><span class="socket-badge">7 Sockets</span><span class="part-preview beam-preview cyan-beam"><i data-lucide="minus" class="h-8 w-8"></i></span></button>
+              <button draggable="true" class="library-thumbnail-card" data-library-item data-model-id="beam-13-gray" data-spawn-kind="beam" data-holes-count="13" data-color="0x94a3b8" data-library-category="beams" data-library-name="Dầm 13 lỗ" title="Dầm 13 lỗ" aria-label="Dầm 13 lỗ"><span class="socket-badge">13 Sockets</span><span class="part-preview beam-preview steel-beam"><i data-lucide="minus" class="h-9 w-9"></i></span></button>
+              <button draggable="true" class="library-thumbnail-card" data-library-item data-model-id="beam-11-sky" data-spawn-kind="beam" data-holes-count="11" data-color="0x7dd3fc" data-library-category="beams" data-library-name="Dầm 11 lỗ" title="Dầm 11 lỗ" aria-label="Dầm 11 lỗ"><span class="socket-badge">11 Sockets</span><span class="part-preview beam-preview sky-beam"><i data-lucide="minus" class="h-9 w-9"></i></span></button>
+              <button draggable="true" class="library-thumbnail-card" data-library-item data-model-id="beam-5-purple" data-spawn-kind="beam" data-holes-count="5" data-color="0xa855f7" data-library-category="beams" data-library-name="Dầm 5 lỗ · Tím" title="Dầm 5 lỗ · Tím" aria-label="Dầm 5 lỗ · Tím"><span class="socket-badge">5 Sockets</span><span class="part-preview beam-preview violet-beam"><i data-lucide="minus" class="h-7 w-7"></i></span></button>
+              <button draggable="true" class="library-thumbnail-card" data-library-item data-model-id="beam-3-amber" data-spawn-kind="beam" data-holes-count="3" data-color="0xfbbf24" data-library-category="beams" data-library-name="Dầm 3 lỗ" title="Dầm 3 lỗ" aria-label="Dầm 3 lỗ"><span class="socket-badge">3 Sockets</span><span class="part-preview beam-preview amber-beam"><i data-lucide="minus" class="h-6 w-6"></i></span></button>
+              <button draggable="true" class="library-thumbnail-card" data-library-item data-model-id="dv-bar-5" data-spawn-kind="dv-bar" data-holes-count="5" data-library-category="beams" data-library-name="Thanh DV · 5 lỗ" title="Thanh DV · 5 lỗ" aria-label="Thanh DV · 5 lỗ"><span class="socket-badge">5 Sockets</span><span class="part-preview beam-preview metal-beam"><i data-lucide="minus" class="h-7 w-7"></i></span></button>
+              <button draggable="true" class="library-thumbnail-card" data-library-item data-model-id="dv-bar-3" data-spawn-kind="dv-bar" data-holes-count="3" data-library-category="beams" data-library-name="Thanh DV · 3 lỗ" title="Thanh DV · 3 lỗ" aria-label="Thanh DV · 3 lỗ"><span class="socket-badge">3 Sockets</span><span class="part-preview beam-preview metal-beam"><i data-lucide="minus" class="h-6 w-6"></i></span></button>
+              <button draggable="true" class="library-thumbnail-card" data-library-item data-model-id="yellow-bracket" data-spawn-kind="yellow-bracket" data-library-category="beams" data-library-name="Nẹp dập vàng" title="Nẹp dập vàng" aria-label="Nẹp dập vàng"><span class="socket-badge">3 Sockets</span><span class="part-preview beam-preview amber-beam"><i data-lucide="minus" class="h-6 w-6"></i></span></button>
+            </div>
+            <div id="library-beams-list" class="library-imported-list"></div>
+          </div>
+        </details>
+
+        <details class="library-accordion" data-library-folder="pins">
+          <summary><i data-lucide="link" class="h-4 w-4 text-sky-300"></i><span>Chốt & Trục</span><small>Pins</small></summary>
+          <div class="library-accordion-content">
+            <div class="library-thumbnail-grid">
+              <button draggable="true" class="library-thumbnail-card" data-library-item data-model-id="standalone-pin" data-spawn-kind="pin" data-color="0x0284c7" data-library-category="pins" data-library-name="Chốt Snap Pin" title="Chốt Snap Pin" aria-label="Chốt Snap Pin"><span class="socket-badge">2 Sockets</span><span class="part-preview pin-preview"><i data-lucide="move-vertical" class="h-8 w-8"></i></span></button>
+            </div>
+            <div id="library-pins-list" class="library-imported-list"></div>
+          </div>
+        </details>
+
+        <details class="library-accordion" data-library-folder="motors">
+          <summary><i data-lucide="settings-2" class="h-4 w-4 text-amber-300"></i><span>Thiết bị & Truyền động</span><small>Devices</small></summary>
+          <div class="library-accordion-content"><div id="library-motors-list" class="library-thumbnail-grid"></div><p id="empty-motors-msg" class="library-empty-state">Chưa có thiết bị trong danh mục.</p></div>
+        </details>
+
+      </div>
+
+      <!-- Inspector -->
+      <div id="tab-pane-inspector" class="hidden space-y-3.5">
+        <div id="inspector-no-selection" class="p-5 rounded-2xl bg-slate-900 border border-slate-800 text-center space-y-2">
+          <i data-lucide="mouse-pointer" class="w-6 h-6 text-slate-500 mx-auto"></i>
+          <p class="text-xs text-slate-400">Chưa có chi tiết nào được chọn. Nhấp chuột vào bất kỳ chi tiết nào trên 3D hoặc chọn trong danh sách ở tab Thêm.</p>
+        </div>
+
+        <div id="inspector-active-panel" class="hidden space-y-3">
+          <div class="bg-slate-900 p-3.5 rounded-2xl border border-slate-700/80 space-y-2.5">
+            <div class="font-bold text-sm text-cyan-300" id="inspect-part-title">Dầm Kỹ Thuật (7 Lỗ)</div>
+            <div class="text-[10px] font-mono text-slate-400"><span id="inspect-part-id">ID: part_1</span></div>
+            
+            <div class="flex gap-2 pt-1">
+              <button onclick="duplicateSelectedPart()" class="flex-1 py-1.5 px-2 rounded-lg bg-slate-800 hover:bg-slate-700 text-slate-200 text-xs font-medium transition-colors flex items-center justify-center gap-1">
+                <i data-lucide="copy" class="w-3.5 h-3.5"></i> Nhân bản
+              </button>
+              <button onclick="deleteSelectedPart()" class="flex-1 py-1.5 px-2 rounded-lg border border-rose-500/30 bg-rose-950/30 hover:bg-rose-900/50 text-rose-300 text-xs font-medium transition-colors flex items-center justify-center gap-1">
+                <i data-lucide="trash-2" class="w-3.5 h-3.5"></i> Xóa
+              </button>
+            </div>
+          </div>
+        </div>
+
+        <div id="appearance-controls" class="hidden space-y-2.5 pt-2.5 border-t border-slate-800">
+          <h3 class="text-xs font-semibold text-slate-400 uppercase tracking-wider flex items-center gap-1.5">
+            <i data-lucide="palette" class="w-3.5 h-3.5 text-cyan-400"></i> Màu sắc
+          </h3>
+          <div class="flex items-center gap-2">
+            <button onclick="setPartColor('#1e293b')" class="w-5 h-5 rounded-full bg-[#1e293b] border border-slate-600 hover:scale-110 transition-transform shadow" title="Đen kỹ thuật"></button>
+            <button onclick="setPartColor('#94a3b8')" class="w-5 h-5 rounded-full bg-[#94a3b8] border border-slate-500 hover:scale-110 transition-transform shadow" title="Xám dầm chuẩn"></button>
+            <button onclick="setPartColor('#0284c7')" class="w-5 h-5 rounded-full bg-[#0284c7] border border-sky-400 hover:scale-110 transition-transform shadow" title="Xanh dương"></button>
+            <button onclick="setPartColor('#e8a716')" class="w-5 h-5 rounded-full bg-[#e8a716] border border-amber-300 hover:scale-110 transition-transform shadow" title="Vàng công nghiệp"></button>
+            <button onclick="setPartColor('#10b981')" class="w-5 h-5 rounded-full bg-[#10b981] border border-emerald-400 hover:scale-110 transition-transform shadow" title="Xanh lục"></button>
+            <button onclick="setPartColor('#a855f7')" class="w-5 h-5 rounded-full bg-[#a855f7] border border-purple-400 hover:scale-110 transition-transform shadow" title="Tím"></button>
+            <label class="w-5 h-5 rounded-full border border-slate-600 flex items-center justify-center cursor-pointer hover:border-cyan-400 transition-colors relative overflow-hidden" title="Mã màu tùy chỉnh">
+              <input type="color" id="input-color-picker" value="#94a3b8" onchange="setPartColor(this.value)" class="absolute -top-3 -left-3 w-12 h-12 cursor-pointer">
+              <i data-lucide="plus" class="w-2.5 h-2.5 text-slate-400"></i>
+            </label>
+          </div>
+        </div>
+      </div>
+
+      <!-- Scene hierarchy placeholder -->
+      <div id="tab-pane-joints" class="hidden space-y-3">
+        <section class="scene-tree-panel">
+          <div class="scene-tree-heading"><i data-lucide="network" class="h-4 w-4 text-cyan-300"></i><span>Scene Hierarchy</span></div>
+          <ul class="scene-tree-list">
+            <li>
+              <details open>
+                <summary><i data-lucide="box" class="h-3.5 w-3.5"></i><span>Scene</span></summary>
+                <ul id="scene-tree-list"><li><span class="scene-tree-empty">Chưa có linh kiện trên Scene</span></li></ul>
+              </details>
+            </li>
+          </ul>
+        </section>
+      </div>
+
+    </div>
+
+    <!-- Sidebar footer -->
+    <div class="sidebar-footer">
+      <button onclick="clearAllParts()" class="clear-canvas-button"><i data-lucide="trash-2" class="h-4 w-4"></i> Xóa Canvas</button>
+    </div>
+  </aside>
+
+  <div id="glb-import-modal" class="import-modal hidden" role="dialog" aria-modal="true" aria-labelledby="glb-import-title">
+    <form class="import-modal-panel" onsubmit="confirmGLBImport(event)">
+      <div class="import-modal-heading">
+        <span class="import-modal-icon"><i data-lucide="file-up" class="h-5 w-5"></i></span>
+        <div><h2 id="glb-import-title">Thêm vào thư viện</h2><p>Đặt tên và chọn thư mục lưu model.</p></div>
+        <button type="button" class="import-modal-close" onclick="cancelGLBImport()" aria-label="Đóng"><i data-lucide="x" class="h-4 w-4"></i></button>
+      </div>
+      <div class="import-file-summary"><i data-lucide="box" class="h-4 w-4"></i><span id="glb-import-file-name">model.glb</span></div>
+      <label class="import-field-label" for="glb-import-name">Tên linh kiện</label>
+      <input id="glb-import-name" class="import-field" type="text" maxlength="80" required autocomplete="off">
+      <label class="import-field-label" for="glb-import-category">Danh mục</label>
+      <select id="glb-import-category" class="import-field" required>
+        <option value="beams">Khung & Dầm</option>
+        <option value="pins">Chốt & Trục</option>
+        <option value="motors">Truyền động</option>
+        <option value="custom" selected>Thiết bị khác</option>
+      </select>
+      <div class="import-modal-actions">
+        <button type="button" class="import-cancel-button" onclick="cancelGLBImport()">Hủy</button>
+        <button type="submit" class="import-confirm-button"><i data-lucide="check" class="h-4 w-4"></i> Xác nhận Import</button>
+      </div>
+    </form>
+  </div>
+
+  <script src="js/core/00_state.js"></script>
+  <script src="js/core/01_scene.js"></script>
+  <script src="js/core/02_controls.js"></script>
+  <script src="js/core/03_selection.js"></script>
+  <script src="js/core/04_geometry.js"></script>
+  <script src="js/assembly/05_parts.js"></script>
+  <script src="js/data/06_import_export.js"></script>
+  <script src="js/assembly/08_placement_collision.js"></script>
+  <script src="js/assembly/09_socket_snapping.js"></script>
+  <script src="js/assembly/10_join_joints.js"></script>
+  <script src="js/assembly/11_part_actions.js"></script>
+  <script src="js/assembly/12_history.js"></script>
+  <script src="js/data/13_project_storage.js"></script>
+  <script src="js/core/14_sidebar_init.js"></script>
+  <script src="js/assembly/system_models_storage.js"></script>
+</body>
+</html>
