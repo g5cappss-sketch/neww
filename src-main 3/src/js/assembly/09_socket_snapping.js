@@ -50,6 +50,29 @@ function getWorldSocketPosition(part, socket) {
       return new THREE.Vector3(0, 1, 0);
     }
 
+    function getPinInsertionAnchorLocal(pin) {
+      const axis = getPinLongitudinalAxis(pin);
+      const sockets = (pin.userData?.holes || [])
+        .map(socket => ({
+          socket,
+          position: new THREE.Vector3(socket.x, socket.y, socket.z)
+        }))
+        .filter(entry => Number.isFinite(entry.position.x) &&
+          Number.isFinite(entry.position.y) && Number.isFinite(entry.position.z));
+      if (sockets.length < 2) return new THREE.Vector3();
+
+      sockets.sort((first, second) => first.position.dot(axis) - second.position.dot(axis));
+      const firstEnd = sockets[0].position;
+      const secondEnd = sockets[sockets.length - 1].position;
+      return firstEnd.add(secondEnd).multiplyScalar(0.5);
+    }
+
+    function getPinSocketSide(pin, pinSocket) {
+      const axis = getPinLongitudinalAxis(pin);
+      const socketPosition = new THREE.Vector3(pinSocket.x, pinSocket.y, pinSocket.z);
+      return Math.sign(socketPosition.sub(getPinInsertionAnchorLocal(pin)).dot(axis)) || 1;
+    }
+
     function getWorldPinAxis(pin) {
       pin.updateMatrixWorld(true);
       return getPinLongitudinalAxis(pin)
@@ -222,7 +245,7 @@ function getWorldSocketPosition(part, socket) {
         snap.targetSocket.y,
         snap.targetSocket.z
       ).applyMatrix4(snap.targetPart.matrixWorld);
-      const collarOffset = new THREE.Vector3(snap.pinSocket.x, 0, snap.pinSocket.z)
+      const collarOffset = getPinInsertionAnchorLocal(pin)
         .applyQuaternion(desiredQuaternion);
       return targetSurface.sub(collarOffset);
     }
@@ -301,9 +324,7 @@ function getWorldSocketPosition(part, socket) {
       if (Math.abs(signedDistance) > 0.05) return Math.sign(signedDistance);
 
       const pinAxis = getPinLongitudinalAxis(pin);
-      const pinSocketSide = Math.sign(
-        new THREE.Vector3(pinSocket.x, pinSocket.y, pinSocket.z).dot(pinAxis)
-      ) || 1;
+      const pinSocketSide = getPinSocketSide(pin, pinSocket);
       const currentWorldAxis = pinAxis.multiplyScalar(pinSocketSide)
         .applyQuaternion(pin.getWorldQuaternion(new THREE.Quaternion()))
         .normalize();
@@ -344,7 +365,8 @@ function getWorldSocketPosition(part, socket) {
                 const targetSurfacePos = new THREE.Vector3(targetSocket.x, surfaceY, targetSocket.z).applyMatrix4(targetPart.matrixWorld);
 
                 // 2. Tính khoảng cách từ Vành cữ chốt (y=0) tới mặt lỗ đang xét
-                const pinCollarPosition = new THREE.Vector3(pinSocket.x, 0, pinSocket.z).applyMatrix4(pin.matrixWorld);
+                const pinAnchorLocal = getPinInsertionAnchorLocal(pin);
+                const pinCollarPosition = pinAnchorLocal.clone().applyMatrix4(pin.matrixWorld);
                 const distance = pinCollarPosition.distanceTo(targetSurfacePos);
 
                 const snapDistance = Math.min(maxDistance, MAX_MAGNETIC_SNAP_DISTANCE);
@@ -356,7 +378,7 @@ function getWorldSocketPosition(part, socket) {
 
                 // Tính hướng của trục chốt
                 const pinAxis = getPinLongitudinalAxis(pin);
-                const pinSocketSide = Math.sign(new THREE.Vector3(pinSocket.x, pinSocket.y, pinSocket.z).dot(pinAxis)) || 1;
+                const pinSocketSide = getPinSocketSide(pin, pinSocket);
                 const currentWorldAxis = pinAxis.clone().multiplyScalar(pinSocketSide).applyQuaternion(currentQuaternion).normalize();
 
                 // Tính pháp tuyến của mặt lỗ đang xét (đã đảo chiều nếu là mặt sau)
@@ -413,7 +435,7 @@ function getWorldSocketPosition(part, socket) {
                     orientationChange >= nearest.orientationChange))) continue;
 
                 // 4. Tính Vị trí tịnh tiến cuối cùng
-                const rotatedCollarOffset = new THREE.Vector3(pinSocket.x, 0, pinSocket.z).applyQuaternion(desiredWorldQuaternion);
+                const rotatedCollarOffset = pinAnchorLocal.applyQuaternion(desiredWorldQuaternion);
                 const desiredWorldPosition = targetSurfacePos.clone().sub(rotatedCollarOffset);
 
                 // Kiểm tra va chạm với mặt đất
@@ -461,9 +483,7 @@ function getWorldSocketPosition(part, socket) {
             
             const verticalSocket = isVerticalSocket(componentSocket);
             const pinAxis = getPinLongitudinalAxis(pin);
-            const pinSocketSide = Math.sign(
-              new THREE.Vector3(pinSocket.x, pinSocket.y, pinSocket.z).dot(pinAxis)
-            ) || 1;
+            const pinSocketSide = getPinSocketSide(pin, pinSocket);
             const surfaceY = verticalSocket
               ? (pinSocketSide > 0 ? -Math.abs(componentSocket.y) : Math.abs(componentSocket.y))
               : componentSocket.y;
@@ -471,11 +491,7 @@ function getWorldSocketPosition(part, socket) {
             part.updateMatrixWorld(true);
             const holeWorldPos = localSurfacePoint.clone().applyMatrix4(part.matrixWorld);
             pin.updateMatrixWorld(true);
-            const pinSocketLocal = new THREE.Vector3(pinSocket.x, pinSocket.y, pinSocket.z);
-            const pinCollarLocal = pinSocketLocal.clone().addScaledVector(
-              pinAxis,
-              -pinSocketLocal.dot(pinAxis)
-            );
+            const pinCollarLocal = getPinInsertionAnchorLocal(pin);
             const pinCollarWorldPos = pinCollarLocal.applyMatrix4(pin.matrixWorld);
             // Rank candidates from the same collar-to-surface anchors used below
             // to place the component; tip distance can select a neighboring hole.
